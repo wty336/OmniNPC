@@ -1,0 +1,55 @@
+[project]
+name = "omni-npc"
+version = "0.1.0"
+description = "OmniNPC - 面向高自由度互动游戏（AVG）的认知架构 Agent 引擎"
+readme = "OmniNPC.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    # Web 框架
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    # LLM 接入（火山方舟）
+    "volcengine-python-sdk[ark]>=1.0.0",
+    "openai>=1.30.0",           # 备用 OpenAI 兼容接口
+    # 向量数据库
+    "chromadb>=0.5.0",
+    # 图数据库（轻量）
+    "networkx>=3.2",
+    # 数据模型 & 配置
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    # 工具库
+    "loguru>=0.7.0",            # 结构化日志
+    "httpx>=0.27.0",            # 异步 HTTP
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",             # FastAPI 异步测试
+    "ruff>=0.4.0",               # Linter + Formatter
+]
+demo = [
+    "streamlit>=1.35.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "config*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
