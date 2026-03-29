@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from loguru import logger
 
+from src.adapters.llm.ark_adapter import ArkModelAdapter
+from src.adapters.llm.base import ModelRequest
 from src.cognition.perception import PerceptionContext
-from src.llm.client import get_llm_client
 
 # 内心独白生成的 Prompt 模板
 INNER_MONOLOGUE_PROMPT = """你是「{character_name}」，{character_role}。
@@ -52,6 +53,9 @@ class InnerMonologue:
     强制 NPC 在回复前先产生一段后台心理活动，
     有效解决 NPC 动机不明和"讨好型人格"问题。
     """
+
+    def __init__(self, model_adapter: ArkModelAdapter | None = None):
+        self._model = model_adapter or ArkModelAdapter()
 
     def generate(self, context: PerceptionContext) -> str:
         """
@@ -105,16 +109,18 @@ class InnerMonologue:
 
         logger.debug(f"[InnerMonologue] 生成中... (character={character.name})")
 
-        llm = get_llm_client()
-        result = llm.chat(
-            messages=[
-                {"role": "system", "content": "你是一个角色扮演内心独白生成器。"},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.9,
-            max_tokens=300,
+        result = self._model.complete(
+            ModelRequest(
+                purpose="reflect",
+                messages=[
+                    {"role": "system", "content": "你是一个角色扮演内心独白生成器。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.9,
+                max_tokens=300,
+            )
         )
 
-        monologue = result["content"].strip()
+        monologue = result.content.strip()
         logger.info(f"[InnerMonologue] 「{character.name}」内心OS: {monologue[:80]}...")
         return monologue

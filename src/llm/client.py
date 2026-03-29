@@ -65,8 +65,10 @@ class LLMClient:
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
-            "temperature": temperature or settings.llm.temperature,
-            "max_tokens": max_tokens or settings.llm.max_tokens,
+            "temperature": (
+                temperature if temperature is not None else settings.llm.temperature
+            ),
+            "max_tokens": max_tokens if max_tokens is not None else settings.llm.max_tokens,
             "top_p": settings.llm.top_p,
         }
 
@@ -91,6 +93,7 @@ class LLMClient:
                 "content": choice.message.content or "",
                 "role": choice.message.role,
                 "tool_calls": None,
+                "model_name": self._model,
                 "usage": {
                     "prompt_tokens": response.usage.prompt_tokens,
                     "completion_tokens": response.usage.completion_tokens,
@@ -139,7 +142,7 @@ class LLMClient:
         """
         result = self.chat(
             messages=messages,
-            temperature=temperature or 0.3,
+            temperature=temperature if temperature is not None else 0.3,
         )
         content = result["content"].strip()
 

@@ -11,12 +11,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
 
 from loguru import logger
 
+from src.adapters.llm.ark_adapter import ArkModelAdapter
+from src.adapters.llm.base import ModelRequest
 from src.cognition.perception import PerceptionContext
-from src.llm.client import get_llm_client
 from src.models.message import AgentResponse, ToolCallResult
 from src.tools.base import get_tool_definitions, get_tool_registry
 
@@ -58,6 +58,9 @@ class ActionGenerator:
     当 LLM 返回工具调用时，会执行工具并将结果反馈给 LLM，
     让 LLM 根据工具执行结果生成最终台词（二次调用）。
     """
+
+    def __init__(self, model_adapter: ArkModelAdapter | None = None):
+        self._model = model_adapter or ArkModelAdapter()
 
     def generate(
         self,
@@ -106,29 +109,31 @@ class ActionGenerator:
 
         logger.debug(f"[ActionGenerator] 第一次调用 LLM... tools={len(tools)} 个")
 
-        llm = get_llm_client()
-        result = llm.chat(
-            messages=messages,
-            tools=tools if tools else None,
-            temperature=0.8,
+        result = self._model.complete(
+            ModelRequest(
+                purpose="respond",
+                messages=messages,
+                tools=tools if tools else [],
+                temperature=0.8,
+            )
         )
 
         # 解析响应
-        dialogue = result["content"] or ""
+        dialogue = result.content or ""
         tool_call_results = []
 
         # ── 处理工具调用 ──
-        if result.get("tool_calls"):
+        if result.tool_calls:
             tool_registry = get_tool_registry()
 
             # 将 assistant 的 tool_calls 消息加入对话历史
             messages.append({
                 "role": "assistant",
-                "content": result["content"] or "",
-                "tool_calls": result["tool_calls"],
+                "content": result.content or "",
+                "tool_calls": result.tool_calls,
             })
 
-            for tc in result["tool_calls"]:
+            for tc in result.tool_calls:
                 func_name = tc["function"]["name"]
                 try:
                     func_args = json.loads(tc["function"]["arguments"])
@@ -173,11 +178,14 @@ class ActionGenerator:
 
             # ── 第二次 LLM 调用：根据工具结果生成最终台词 ──
             logger.debug("[ActionGenerator] 第二次调用 LLM（基于工具结果生成台词）...")
-            second_result = llm.chat(
-                messages=messages,
-                temperature=0.8,
+            second_result = self._model.complete(
+                ModelRequest(
+                    purpose="respond",
+                    messages=messages,
+                    temperature=0.8,
+                )
             )
-            dialogue = second_result["content"] or ""
+            dialogue = second_result.content or ""
 
         response = AgentResponse(
             dialogue=dialogue,

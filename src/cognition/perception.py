@@ -9,15 +9,18 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from src.adapters.memory.base import MemoryAdapter
 from src.models.character import CharacterProfile
 from src.models.game_state import GameState
 from src.models.memory import MemoryQueryResult
-from src.memory.memory_manager import MemoryManager
+
+if TYPE_CHECKING:
+    from src.memory.memory_manager import MemoryManager
 
 
 class PerceptionContext(BaseModel):
@@ -41,8 +44,22 @@ class Perception:
     打包为结构化的 PerceptionContext。
     """
 
-    def __init__(self, memory_manager: MemoryManager):
-        self._memory = memory_manager
+    def __init__(
+        self,
+        memory_manager: "MemoryManager | MemoryAdapter | None" = None,
+        memory_adapter: MemoryAdapter | None = None,
+    ):
+        if memory_adapter is not None:
+            self._memory: Any = memory_adapter
+        elif memory_manager is not None:
+            if isinstance(memory_manager, MemoryAdapter):
+                self._memory = memory_manager
+            else:
+                from src.adapters.memory.composite import CompositeMemoryAdapter
+
+                self._memory = CompositeMemoryAdapter(memory_manager)
+        else:
+            raise ValueError("Perception requires a memory_manager or memory_adapter")
 
     def perceive(
         self,
