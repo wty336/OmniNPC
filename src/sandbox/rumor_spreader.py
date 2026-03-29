@@ -85,6 +85,20 @@ class RumorSpreader:
         )
         return rumor
 
+    def _store_rumor_memory(self, memory_target: Any, memory: MemoryItem) -> None:
+        """兼容旧式 MemoryManager 和更轻量的记忆写入对象。"""
+        episodic = getattr(memory_target, "episodic", None)
+        if episodic is not None and hasattr(episodic, "store"):
+            episodic.store(memory)
+            return
+
+        store_memory_item = getattr(memory_target, "store_memory_item", None)
+        if callable(store_memory_item):
+            store_memory_item(memory)
+            return
+
+        raise AttributeError("memory target does not support rumor storage")
+
     def spread_tick(
         self,
         all_npc_ids: list[str],
@@ -149,7 +163,7 @@ class RumorSpreader:
                                 "original_source": rumor.source_npc,
                             },
                         )
-                        mm.episodic.store(memory)
+                        self._store_rumor_memory(mm, memory)
                 except Exception as e:
                     logger.warning(f"[RumorSpreader] 写入记忆失败: {e}")
 

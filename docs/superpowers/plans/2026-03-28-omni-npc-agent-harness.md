@@ -981,7 +981,23 @@ git commit -m "refactor: convert cognition modules to runtime abilities"
 - Test: `tests/test_api.py`
 - Test: `tests/runtime/test_engine_runtime_integration.py`
 
-- [ ] **Step 1: Write the failing tests**
+**Status:** Completed, not committed
+
+**Actual verification result:**
+- `conda activate plante; python -m pytest tests/runtime/test_engine_runtime_integration.py -v`
+- Result: `2 passed`
+- Regression check: `conda activate plante; python -m pytest tests/runtime/test_runtime_contracts.py tests/runtime/test_agent_runtime.py tests/adapters/test_model_adapter.py tests/adapters/test_tool_executor.py tests/runtime/test_runtime_tool_flow.py tests/adapters/test_memory_adapter.py tests/cognition/test_perception_ability.py tests/cognition/test_reflection_and_action_policy.py tests/test_cognition.py tests/runtime/test_engine_runtime_integration.py -v`
+- Result: `36 passed`
+- Environment note: `tests/test_api.py` could not be executed in `plante` because the environment currently lacks `fastapi`, so API-path verification for this task remained limited to the minimal synchronous compatibility change in `src/api/routes/chat.py`.
+
+**Actual implementation notes discovered during Task 6 review:**
+- `NPCEngine` now accepts `use_agent_runtime: bool = False`; default behavior still goes through the legacy `CognitivePipeline`.
+- Dual-path routing lives entirely inside `src/engine.py`: legacy pipeline remains the default path, while the runtime path is lazily created per character via `_runtimes`.
+- `RuntimeResult` is adapted back into the existing `AgentResponse` shape without adding new response fields or changing the API schema.
+- To preserve the synchronous `NPCEngine.process_chat()` interface, `src/api/routes/chat.py` received a one-line compatibility fix removing `await` from the engine call.
+- The planned edits to `src/models/message.py`, `src/cognition/legacy_pipeline.py`, and `src/cognition/pipeline.py` were intentionally skipped because the dual-path engine integration did not require them.
+
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from unittest.mock import patch
@@ -1030,12 +1046,12 @@ def test_chat_endpoint_format(client):
     assert "dialogue" in data["data"]
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_api.py tests/runtime/test_engine_runtime_integration.py -v`
 Expected: FAIL because `NPCEngine` still instantiates `CognitivePipeline`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # src/engine.py
@@ -1094,7 +1110,7 @@ from src.cognition.pipeline import CognitivePipeline
 __all__ = ["CognitivePipeline"]
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_api.py tests/runtime/test_engine_runtime_integration.py -v`
 Expected: PASS
@@ -1116,7 +1132,21 @@ git commit -m "refactor: route chat flow through agent runtime"
 - Modify: `src/sandbox/tick_engine.py`
 - Modify: `src/sandbox/rumor_spreader.py`
 
-- [ ] **Step 1: Write the failing tests**
+**Status:** Completed, not committed
+
+**Actual verification result:**
+- `conda activate plante; python -m pytest tests/runtime/test_trace_sequence.py tests/runtime/test_stop_conditions.py tests/test_phase2.py -v`
+- Result: `14 passed`
+- Regression check: `conda activate plante; python -m pytest tests/runtime/test_runtime_contracts.py tests/runtime/test_agent_runtime.py tests/runtime/test_trace_sequence.py tests/runtime/test_stop_conditions.py tests/adapters/test_model_adapter.py tests/adapters/test_tool_executor.py tests/runtime/test_runtime_tool_flow.py tests/adapters/test_memory_adapter.py tests/cognition/test_perception_ability.py tests/cognition/test_reflection_and_action_policy.py tests/test_cognition.py tests/test_phase2.py tests/runtime/test_engine_runtime_integration.py -v`
+- Result: `50 passed`
+
+**Actual implementation notes discovered during Task 7 review:**
+- Runtime side stayed test-only: the new trace and stop-condition coverage passed without changing `src/runtime/*`.
+- `TickEngine` now prefers a public `engine.iter_memory_managers()` hook when available, and only falls back to the old private `_memory_managers` path otherwise.
+- `RumorSpreader` now supports a lighter `store_memory_item(...)` sink in addition to the legacy `episodic.store(...)` path, reducing the hard assumption that every target is a full `MemoryManager`.
+- `NPCEngine` received minimal public memory-manager accessors so sandbox code can stop reaching directly into its private internals.
+
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from src.runtime.agent_runtime import AgentRuntime
@@ -1184,12 +1214,12 @@ def test_runtime_stops_when_budget_is_exhausted():
     assert result.stop_reason == "step_budget_exhausted"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/runtime/test_trace_sequence.py tests/runtime/test_stop_conditions.py -v`
 Expected: FAIL until trace ordering and stop policy are fully wired
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # src/runtime/agent_runtime.py
@@ -1234,7 +1264,7 @@ if get_memory_manager:
         )
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/runtime/test_trace_sequence.py tests/runtime/test_stop_conditions.py tests/test_phase2.py -v`
 Expected: PASS

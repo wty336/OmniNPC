@@ -3,10 +3,23 @@ Phase 2 新模块测试：遗忘曲线、流言传播、Tick 引擎。
 """
 
 import math
+import sys
 import time
+from types import SimpleNamespace
+from types import ModuleType
+from unittest.mock import patch
 import pytest
 
 from src.models.memory import MemoryItem, MemoryType
+
+loguru_stub = ModuleType("loguru")
+loguru_stub.logger = SimpleNamespace(
+    info=lambda *args, **kwargs: None,
+    debug=lambda *args, **kwargs: None,
+    warning=lambda *args, **kwargs: None,
+    error=lambda *args, **kwargs: None,
+)
+sys.modules.setdefault("loguru", loguru_stub)
 
 
 class TestMemoryDecay:
@@ -133,6 +146,38 @@ class TestRumorSpreader:
         rumor.degrade(factor=0.85)
         assert abs(rumor.credibility - 0.7225) < 0.01
 
+    def test_spread_tick_supports_memory_sink_without_episodic_store(self):
+        """测试流言传播支持更轻量的记忆写入口。"""
+        from src.sandbox.rumor_spreader import RumorSpreader
+
+        class MemorySink:
+            def __init__(self):
+                self.memories = []
+
+            def store_memory_item(self, memory):
+                self.memories.append(memory)
+
+        sink = MemorySink()
+        spreader = RumorSpreader()
+        spreader.create_rumor(
+            content="玩家昨夜偷偷翻墙下山",
+            source_npc="npc_a",
+            original_event="翻墙事件",
+        )
+
+        with patch("src.sandbox.rumor_spreader.random.random", return_value=0.0), patch(
+            "src.sandbox.rumor_spreader.random.choice",
+            return_value="npc_b",
+        ):
+            records = spreader.spread_tick(
+                all_npc_ids=["npc_a", "npc_b"],
+                get_memory_manager=lambda npc_id: sink if npc_id == "npc_b" else None,
+            )
+
+        assert len(records) == 1
+        assert sink.memories[0].metadata["type"] == "rumor"
+        assert sink.memories[0].character_id == "npc_b"
+
 
 class TestTickEngine:
     """Tick 引擎测试。"""
@@ -149,3 +194,16 @@ class TestTickEngine:
         result2 = engine.tick()
         assert result2["tick_id"] == 2
         assert engine.tick_count == 2
+
+    def test_tick_uses_public_memory_manager_iterator_when_available(self):
+        """测试 TickEngine 优先使用公开的记忆迭代接口。"""
+        from src.sandbox.tick_engine import TickEngine
+
+        fake_engine = SimpleNamespace(
+            iter_memory_managers=lambda: [("npc_a", SimpleNamespace(episodic=object()))]
+        )
+
+        engine = TickEngine()
+        result = engine.tick(engine=fake_engine)
+
+        assert result["decay_results"] == {"npc_a": {"status": "updated"}}

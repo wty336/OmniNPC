@@ -118,8 +118,12 @@ class TickEngine:
     def _process_memory_decay(self, engine) -> dict:
         """处理所有 NPC 的记忆衰减。"""
         decay_results = {}
+        if hasattr(engine, "iter_memory_managers"):
+            managers = engine.iter_memory_managers()
+        else:
+            managers = engine._memory_managers.items()
 
-        for character_id, memory_manager in engine._memory_managers.items():
+        for character_id, memory_manager in managers:
             # 获取所有情景记忆并应用衰减
             # Phase 2: 只做衰减权重更新，不物理删除
             episodic = memory_manager.episodic

@@ -179,23 +179,28 @@ class NPCEngine:
         """获取游戏状态。"""
         return self._state_store.load_or_create(session_id)
 
+    def get_memory_manager(self, character_id: str) -> MemoryManager | None:
+        """获取或延迟加载指定角色的记忆管理器。"""
+        if character_id not in self._memory_managers and character_id not in self._characters:
+            self.load_character(character_id)
+        return self._memory_managers.get(character_id)
+
+    def iter_memory_managers(self):
+        """公开遍历已加载角色的记忆管理器，避免外部直接依赖私有字段。"""
+        return self._memory_managers.items()
+
     def force_tick(self) -> dict:
         """手动触发一次全局 Tick。"""
         # 1. 触发 TickEngine（处理定时操作）
         tick_res = self.tick_engine.tick(engine=self)
         
         # 2. 触发流言传播
-        def _get_mm(cid):
-            if cid not in self._memory_managers:
-                self.load_character(cid)
-            return self._memory_managers.get(cid)
-            
         # 让尚未加载的硬编码角色也参与传播（用于测试）
         all_ids = list(set(["tsundere_sister", "gentle_healer"] + list(self._characters.keys())))
         
         spreads = self.rumor_spreader.spread_tick(
             all_npc_ids=all_ids,
-            get_memory_manager=_get_mm,
+            get_memory_manager=self.get_memory_manager,
         )
         tick_res["rumor_spreads"] = spreads
         return tick_res
