@@ -28,7 +28,7 @@ async def chat(request: ChatRequest):
     """
     try:
         engine = get_engine()
-        response = await engine.process_chat(
+        response = engine.process_chat(
             player_input=request.player_input,
             character_id=request.character_id,
             session_id=request.session_id,

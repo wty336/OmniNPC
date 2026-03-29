@@ -3,7 +3,7 @@ API 端点测试。
 """
 
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, Mock
 
 from fastapi.testclient import TestClient
 
@@ -44,7 +44,7 @@ def test_chat_endpoint_format(client):
 
     with patch("src.api.routes.chat.get_engine") as mock_engine:
         engine_instance = mock_engine.return_value
-        engine_instance.process_chat = AsyncMock(return_value=mock_response)
+        engine_instance.process_chat = Mock(return_value=mock_response)
 
         response = client.post("/api/v1/chat", json={
             "player_input": "你好",

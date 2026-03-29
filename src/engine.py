@@ -18,8 +18,11 @@ from src.memory.memory_manager import MemoryManager
 from src.models.character import CharacterProfile
 from src.models.game_state import GameState
 from src.models.message import AgentResponse
+from src.runtime.agent_runtime import AgentRuntime
+from src.runtime.policies import DefaultRuntimePolicy
+from src.runtime.runtime_result import RuntimeResult
+from src.runtime.turn_context import TurnContext
 from src.storage.game_state_store import GameStateStore
-
 # 确保工具已注册（导入时触发装饰器）
 import src.tools.state_updater  # noqa: F401
 import src.tools.item_manager   # noqa: F401
@@ -35,10 +38,12 @@ class NPCEngine:
     - 游戏状态持久化
     """
 
-    def __init__(self):
+    def __init__(self, use_agent_runtime: bool = False):
         self._characters: dict[str, CharacterProfile] = {}
         self._memory_managers: dict[str, MemoryManager] = {}
         self._pipelines: dict[str, CognitivePipeline] = {}
+        self._runtimes: dict[str, AgentRuntime] = {}
+        self._use_agent_runtime = use_agent_runtime
         self._state_store = GameStateStore()
         
         from src.sandbox.tick_engine import TickEngine
@@ -76,11 +81,35 @@ class NPCEngine:
         )
         self._memory_managers[character_id] = memory
 
-        # 初始化认知管线
+        # 默认保留 legacy 认知管线；runtime 路径按需懒加载
         self._pipelines[character_id] = CognitivePipeline(memory)
 
         logger.info(f"[NPCEngine] 加载角色: {character.name} ({character_id})")
         return character
+
+    def _get_or_create_runtime(self, character_id: str) -> AgentRuntime:
+        runtime = self._runtimes.get(character_id)
+        if runtime is None:
+            runtime = AgentRuntime(policy=DefaultRuntimePolicy())
+            self._runtimes[character_id] = runtime
+        return runtime
+
+    def _adapt_runtime_result(
+        self,
+        character: CharacterProfile,
+        result: RuntimeResult,
+    ) -> AgentResponse:
+        """将 runtime 输出适配为现有 API 使用的 AgentResponse。"""
+        return AgentResponse(
+            dialogue=result.dialogue,
+            emotion="neutral",
+            inner_monologue=None,
+            tool_calls=[],
+            state_changes={},
+            metadata=None,
+            character_id=character.id,
+            character_name=character.name,
+        )
 
     def process_chat(
         self,
@@ -106,8 +135,6 @@ class NPCEngine:
             self.load_character(character_id)
 
         character = self._characters[character_id]
-        pipeline = self._pipelines[character_id]
-
         # 加载游戏状态
         game_state = self._state_store.load_or_create(session_id)
 
@@ -123,12 +150,25 @@ class NPCEngine:
                 location=character.location,
             )
 
-        # 执行认知管线
-        response = pipeline.run(
-            player_input=player_input,
-            character=character,
-            game_state=game_state,
-        )
+        if self._use_agent_runtime:
+            turn_context = TurnContext(
+                turn_id=f"{session_id}:{character_id}",
+                session_id=session_id,
+                character_id=character_id,
+                player_input=player_input,
+            )
+            runtime = self._get_or_create_runtime(character_id)
+            runtime_result = runtime.run(turn_context)
+            response = self._adapt_runtime_result(character, runtime_result)
+        else:
+            pipeline = self._pipelines[character_id]
+
+            # 执行认知管线
+            response = pipeline.run(
+                player_input=player_input,
+                character=character,
+                game_state=game_state,
+            )
 
         # 持久化游戏状态
         self._state_store.save(game_state)
