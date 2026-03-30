@@ -5,6 +5,7 @@ API 端点测试。
 import pytest
 from unittest.mock import patch, Mock
 
+fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from src.models.message import AgentResponse

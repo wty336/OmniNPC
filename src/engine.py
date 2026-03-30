@@ -8,24 +8,25 @@ OmniNPC 引擎核心 — NPC 会话管理与认知管线调度。
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
 
 from config.settings import settings
-from src.cognition.pipeline import CognitivePipeline
 from src.memory.memory_manager import MemoryManager
 from src.models.character import CharacterProfile
 from src.models.game_state import GameState
 from src.models.message import AgentResponse
 from src.runtime.agent_runtime import AgentRuntime
-from src.runtime.policies import DefaultRuntimePolicy
 from src.runtime.runtime_result import RuntimeResult
 from src.runtime.turn_context import TurnContext
 from src.storage.game_state_store import GameStateStore
 # 确保工具已注册（导入时触发装饰器）
 import src.tools.state_updater  # noqa: F401
 import src.tools.item_manager   # noqa: F401
+
+if TYPE_CHECKING:
+    from src.cognition.pipeline import CognitivePipeline
 
 
 class NPCEngine:
@@ -81,16 +82,42 @@ class NPCEngine:
         )
         self._memory_managers[character_id] = memory
 
-        # 默认保留 legacy 认知管线；runtime 路径按需懒加载
-        self._pipelines[character_id] = CognitivePipeline(memory)
-
         logger.info(f"[NPCEngine] 加载角色: {character.name} ({character_id})")
         return character
+
+    def _get_or_create_pipeline(self, character_id: str) -> CognitivePipeline:
+        pipeline = self._pipelines.get(character_id)
+        if pipeline is None:
+            from src.cognition.pipeline import CognitivePipeline
+
+            pipeline = CognitivePipeline(self._memory_managers[character_id])
+            self._pipelines[character_id] = pipeline
+        return pipeline
 
     def _get_or_create_runtime(self, character_id: str) -> AgentRuntime:
         runtime = self._runtimes.get(character_id)
         if runtime is None:
-            runtime = AgentRuntime(policy=DefaultRuntimePolicy())
+            from src.adapters.memory.composite import CompositeMemoryAdapter
+            from src.adapters.tools.catalog import ToolCatalog
+            from src.adapters.tools.executor import ToolExecutor
+            from src.cognition.action_planner import ActionPlanner
+            from src.cognition.inner_monologue import InnerMonologue
+            from src.cognition.perception import Perception
+            from src.runtime.chat_policy import ChatRuntimePolicy
+
+            character = self._characters[character_id]
+            memory_adapter = CompositeMemoryAdapter(
+                self._memory_managers[character_id]
+            )
+            runtime = AgentRuntime(
+                policy=ChatRuntimePolicy(),
+                tool_executor=ToolExecutor(ToolCatalog.load()),
+                memory_adapter=memory_adapter,
+                reflector=InnerMonologue(),
+                action_planner=ActionPlanner(),
+                perception=Perception(memory_adapter=memory_adapter),
+                character=character,
+            )
             self._runtimes[character_id] = runtime
         return runtime
 
@@ -158,10 +185,10 @@ class NPCEngine:
                 player_input=player_input,
             )
             runtime = self._get_or_create_runtime(character_id)
-            runtime_result = runtime.run(turn_context)
+            runtime_result = runtime.run(turn_context, game_state=game_state)
             response = self._adapt_runtime_result(character, runtime_result)
         else:
-            pipeline = self._pipelines[character_id]
+            pipeline = self._get_or_create_pipeline(character_id)
 
             # 执行认知管线
             response = pipeline.run(
@@ -219,5 +246,5 @@ def get_engine() -> NPCEngine:
     """获取引擎全局单例。"""
     global _engine
     if _engine is None:
-        _engine = NPCEngine()
+        _engine = NPCEngine(use_agent_runtime=True)
     return _engine

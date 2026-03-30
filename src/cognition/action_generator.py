@@ -16,35 +16,16 @@ from loguru import logger
 
 from src.adapters.llm.ark_adapter import ArkModelAdapter
 from src.adapters.llm.base import ModelRequest
+from src.cognition.action_planner import (
+    ACTION_SYSTEM_PROMPT as _ACTION_SYSTEM_PROMPT,
+    ActionPlanner,
+    build_action_messages,
+)
 from src.cognition.perception import PerceptionContext
 from src.models.message import AgentResponse, ToolCallResult
 from src.tools.base import get_tool_definitions, get_tool_registry
 
-# 行动生成的系统 Prompt
-ACTION_SYSTEM_PROMPT = """你是「{character_name}」，{character_role}。
-
-## 角色设定
-{system_prompt}
-
-## 你的内心独白（玩家看不到）
-{inner_monologue}
-
-## 当前环境
-{environment_desc}
-
-## 系统标识（调用工具时必须使用）
-- 你的角色 ID: `{character_id}`
-- 玩家 ID: `{player_id}`
-
----
-
-请根据你的内心独白和角色设定，回复玩家。
-
-要求：
-1. **台词**必须完全符合你的性格，体现你的说话风格
-2. 如果需要修改游戏状态（如好感度变化、玩家位置移动、道具增减），请调用对应的工具。调用工具时，source_id 必须使用 `{character_id}`，target_id 必须使用 `{player_id}`
-3. 只输出角色台词，不要加旁白或动作描写的括号注释
-4. 保持台词简洁生动，一般不超过 100 字"""
+ACTION_SYSTEM_PROMPT = _ACTION_SYSTEM_PROMPT
 
 
 class ActionGenerator:
@@ -61,6 +42,7 @@ class ActionGenerator:
 
     def __init__(self, model_adapter: ArkModelAdapter | None = None):
         self._model = model_adapter or ArkModelAdapter()
+        self._planner = ActionPlanner(model_adapter=self._model)
 
     def generate(
         self,
@@ -80,101 +62,81 @@ class ActionGenerator:
         AgentResponse : 包含台词和工具调用的完整响应
         """
         character = context.character
-
-        system_prompt = ACTION_SYSTEM_PROMPT.format(
-            character_name=character.name,
-            character_role=character.role,
-            character_id=character.id,
-            player_id=context.game_state.player.player_id,
-            system_prompt=character.system_prompt,
-            inner_monologue=inner_monologue,
-            environment_desc=context.environment_desc,
-        )
-
-        # 构建消息列表：系统提示 + 工作记忆（历史对话） + 当前输入
-        messages = [{"role": "system", "content": system_prompt}]
-
-        # 加入工作记忆中的历史对话
-        for turn in context.memory_result.working_memories[-6:]:
-            if turn.role == "player":
-                messages.append({"role": "user", "content": turn.content})
-            elif turn.role == "npc":
-                messages.append({"role": "assistant", "content": turn.content})
-
-        # 当前玩家输入
-        messages.append({"role": "user", "content": context.player_input})
-
-        # 获取工具定义
+        messages = build_action_messages(context, inner_monologue)
         tools = get_tool_definitions()
 
         logger.debug(f"[ActionGenerator] 第一次调用 LLM... tools={len(tools)} 个")
+        plan = self._planner.plan(context, inner_monologue, tools=tools)
 
-        result = self._model.complete(
-            ModelRequest(
-                purpose="respond",
-                messages=messages,
-                tools=tools if tools else [],
-                temperature=0.8,
-            )
-        )
-
-        # 解析响应
-        dialogue = result.content or ""
+        dialogue = plan.dialogue
         tool_call_results = []
 
         # ── 处理工具调用 ──
-        if result.tool_calls:
+        if plan.tool_calls:
             tool_registry = get_tool_registry()
+            assistant_tool_calls = []
+            tool_messages = []
 
-            # 将 assistant 的 tool_calls 消息加入对话历史
-            messages.append({
-                "role": "assistant",
-                "content": result.content or "",
-                "tool_calls": result.tool_calls,
-            })
-
-            for tc in result.tool_calls:
-                func_name = tc["function"]["name"]
+            for index, tool_call in enumerate(plan.tool_calls, start=1):
+                function = tool_call.get("function", {})
+                tool_name = function.get("name")
+                raw_arguments = function.get("arguments", "{}")
                 try:
-                    func_args = json.loads(tc["function"]["arguments"])
+                    parsed_arguments = json.loads(raw_arguments)
                 except json.JSONDecodeError:
-                    func_args = {}
+                    parsed_arguments = {}
+                if not isinstance(parsed_arguments, dict):
+                    parsed_arguments = {}
 
-                logger.info(f"[ActionGenerator] 工具调用: {func_name}({func_args})")
+                tool_call_id = tool_call.get("id") or f"call-{index}"
+                assistant_tool_calls.append(
+                    {
+                        "id": tool_call_id,
+                        "type": tool_call.get("type", "function"),
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(parsed_arguments, ensure_ascii=False),
+                        },
+                    }
+                )
 
-                # 执行工具
-                tool_func = tool_registry.get(func_name)
-                tool_result_data = None
+                logger.info(f"[ActionGenerator] 工具调用: {tool_name}({parsed_arguments})")
+
+                tool_func = tool_registry.get(tool_name)
                 if tool_func:
                     try:
                         tool_result_data = tool_func(
-                            game_state=context.game_state, **func_args
+                            game_state=context.game_state, **parsed_arguments
                         )
                         tool_call_results.append(ToolCallResult(
-                            tool_name=func_name,
-                            arguments=func_args,
+                            tool_name=tool_name,
+                            arguments=parsed_arguments,
                             result=tool_result_data,
                             success=True,
                         ))
                     except Exception as e:
-                        logger.error(f"工具执行失败: {func_name} -> {e}")
+                        logger.error(f"工具执行失败: {tool_name} -> {e}")
                         tool_result_data = {"error": str(e)}
                         tool_call_results.append(ToolCallResult(
-                            tool_name=func_name,
-                            arguments=func_args,
+                            tool_name=tool_name,
+                            arguments=parsed_arguments,
                             success=False,
                             error=str(e),
                         ))
                 else:
-                    logger.warning(f"未知工具: {func_name}")
-                    tool_result_data = {"error": f"未知工具: {func_name}"}
-
-                # 将工具执行结果加入消息历史（反馈给 LLM）
-                messages.append({
+                    logger.warning(f"未知工具: {tool_name}")
+                    tool_result_data = {"error": f"未知工具: {tool_name}"}
+                tool_messages.append({
                     "role": "tool",
-                    "tool_call_id": tc["id"],
+                    "tool_call_id": tool_call_id,
                     "content": json.dumps(tool_result_data, ensure_ascii=False),
                 })
+            messages.append({
+                "role": "assistant",
+                "content": plan.dialogue or "",
+                "tool_calls": assistant_tool_calls,
+            })
+            messages.extend(tool_messages)
 
             # ── 第二次 LLM 调用：根据工具结果生成最终台词 ──
             logger.debug("[ActionGenerator] 第二次调用 LLM（基于工具结果生成台词）...")

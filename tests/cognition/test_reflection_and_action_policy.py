@@ -19,8 +19,9 @@ from src.models.memory import ConversationTurn, MemoryItem, MemoryQueryResult, M
 
 
 class FakeModelAdapter:
-    def __init__(self) -> None:
+    def __init__(self, response_tool_calls: list[dict] | None = None) -> None:
         self.requests: list[ModelRequest] = []
+        self.response_tool_calls = response_tool_calls or []
 
     def complete(self, request: ModelRequest) -> ModelResponse:
         self.requests.append(request)
@@ -37,23 +38,7 @@ class FakeModelAdapter:
         if respond_calls == 1:
             return ModelResponse(
                 content="",
-                tool_calls=[
-                    {
-                        "id": "call-1",
-                        "type": "function",
-                        "function": {
-                            "name": "update_affection",
-                            "arguments": json.dumps(
-                                {
-                                    "source_id": "npc_1",
-                                    "target_id": "player-42",
-                                    "delta": 10,
-                                },
-                                ensure_ascii=False,
-                            ),
-                        },
-                    }
-                ],
+                tool_calls=self.response_tool_calls,
                 usage={},
                 model_name="fake-model",
             )
@@ -106,8 +91,31 @@ def make_context() -> PerceptionContext:
     )
 
 
+def make_tool_call(name: str, arguments: dict[str, object], call_id: str) -> dict:
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": json.dumps(arguments, ensure_ascii=False),
+        },
+    }
+
+
 def test_reflection_and_action_use_injected_model_adapter_and_preserve_tools():
-    model = FakeModelAdapter()
+    model = FakeModelAdapter(
+        response_tool_calls=[
+            make_tool_call(
+                "update_affection",
+                {
+                    "source_id": "npc_1",
+                    "target_id": "player-42",
+                    "delta": 10,
+                },
+                "call-1",
+            )
+        ]
+    )
     context = make_context()
 
     def update_affection(*, game_state: GameState, source_id: str, target_id: str, delta: float):
@@ -129,8 +137,82 @@ def test_reflection_and_action_use_injected_model_adapter_and_preserve_tools():
     assert context.game_state.get_relationship("npc_1", "player-42").affection == 60
 
 
+def test_action_generator_executes_multiple_tool_calls_and_replays_all_results():
+    model = FakeModelAdapter(
+        response_tool_calls=[
+            make_tool_call(
+                "update_affection",
+                {
+                    "source_id": "npc_1",
+                    "target_id": "player-42",
+                    "delta": 10,
+                },
+                "call-1",
+            ),
+            make_tool_call(
+                "add_item",
+                {
+                    "source_id": "npc_1",
+                    "target_id": "player-42",
+                    "item_id": "healing_potion",
+                    "count": 1,
+                },
+                "call-2",
+            ),
+        ]
+    )
+    context = make_context()
+
+    def update_affection(*, game_state: GameState, source_id: str, target_id: str, delta: float):
+        new_value = game_state.update_affection(source_id, target_id, delta)
+        return {"new_affection": new_value}
+
+    def add_item(*, game_state: GameState, source_id: str, target_id: str, item_id: str, count: int):
+        for _ in range(count):
+            game_state.player.inventory.append(item_id)
+        return {"item_id": item_id, "count": count}
+
+    with patch("src.cognition.action_generator.get_tool_definitions", return_value=[{"type": "function"}]), patch(
+        "src.cognition.action_generator.get_tool_registry",
+        return_value={
+            "update_affection": update_affection,
+            "add_item": add_item,
+        },
+    ):
+        monologue = InnerMonologue(model_adapter=model).generate(context)
+        response = ActionGenerator(model_adapter=model).generate(context, monologue)
+
+    assert response.dialogue == "别慌，先站到我身后。"
+    assert [tool_call.tool_name for tool_call in response.tool_calls] == ["update_affection", "add_item"]
+    assert [request.purpose for request in model.requests] == ["reflect", "respond", "respond"]
+
+    second_request = model.requests[-1]
+    assistant_message = second_request.messages[-3]
+    tool_message_1 = second_request.messages[-2]
+    tool_message_2 = second_request.messages[-1]
+
+    assert assistant_message["tool_calls"][0]["function"]["name"] == "update_affection"
+    assert assistant_message["tool_calls"][1]["function"]["name"] == "add_item"
+    assert tool_message_1["tool_call_id"] == "call-1"
+    assert tool_message_2["tool_call_id"] == "call-2"
+    assert context.game_state.get_relationship("npc_1", "player-42").affection == 60
+    assert context.game_state.player.inventory.count("healing_potion") == 1
+
+
 def test_reflection_and_action_default_constructors_use_internal_model_adapter():
-    fake_model = FakeModelAdapter()
+    fake_model = FakeModelAdapter(
+        response_tool_calls=[
+            make_tool_call(
+                "update_affection",
+                {
+                    "source_id": "npc_1",
+                    "target_id": "player-42",
+                    "delta": 10,
+                },
+                "call-1",
+            )
+        ]
+    )
     context = make_context()
 
     def update_affection(*, game_state: GameState, source_id: str, target_id: str, delta: float):
