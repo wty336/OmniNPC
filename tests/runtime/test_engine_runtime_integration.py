@@ -432,6 +432,87 @@ def test_process_chat_uses_agent_runtime_when_flag_enabled(monkeypatch):
     assert seen_contexts[1] == (seen_contexts[0], "先稳住她。")
 
 
+def test_process_chat_runtime_path_returns_dialogue_after_tool_step(monkeypatch):
+    _install_loguru_stub()
+    _install_game_state_store_stub()
+    _install_settings_stub()
+    _install_sandbox_stubs()
+    engine_module = _import_engine_module()
+    tool_catalog_module = importlib.import_module("src.adapters.tools.catalog")
+    tool_executor_module = importlib.import_module("src.adapters.tools.executor")
+    inner_monologue_module = importlib.import_module("src.cognition.inner_monologue")
+    action_planner_module = importlib.import_module("src.cognition.action_planner")
+
+    class FakeToolExecution:
+        def __init__(self, tool_name: str, arguments: dict[str, object]):
+            self.tool_name = tool_name
+            self.arguments = arguments
+            self.success = True
+            self.output = {"tool_name": tool_name, "arguments": arguments}
+            self.error = None
+
+        def as_event_payload(self):
+            return {
+                "tool_name": self.tool_name,
+                "arguments": self.arguments,
+                "success": self.success,
+                "output": self.output,
+                "error": self.error,
+            }
+
+    class FakeToolExecutor:
+        def __init__(self, catalog):
+            self.catalog = catalog
+
+        def execute(self, tool_name, arguments=None, state=None):
+            return FakeToolExecution(tool_name, dict(arguments or {}))
+
+    class FakeInnerMonologue:
+        def generate(self, context):
+            return "先给她补救方案。"
+
+    class FakeActionPlanner:
+        def plan(self, context, inner_monologue: str):
+            return SimpleNamespace(
+                dialogue="",
+                tool_name="add_item",
+                arguments={"item_id": "glue", "count": 1},
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "add_item",
+                            "arguments": '{"item_id": "glue", "count": 1}',
+                        },
+                    }
+                ],
+            )
+
+        def finalize_response(self, context, inner_monologue: str, plan, tool_results):
+            return "拿着这个，先去补好再回来。"
+
+    monkeypatch.setattr(tool_catalog_module.ToolCatalog, "load", lambda: object())
+    monkeypatch.setattr(tool_executor_module, "ToolExecutor", FakeToolExecutor)
+    monkeypatch.setattr(inner_monologue_module, "InnerMonologue", FakeInnerMonologue)
+    monkeypatch.setattr(action_planner_module, "ActionPlanner", FakeActionPlanner)
+
+    engine = engine_module.NPCEngine(use_agent_runtime=True)
+    character = _make_character()
+    engine._characters[character.id] = character
+    engine._memory_managers[character.id] = _FakeMemoryManager()
+
+    result = engine.process_chat(
+        player_input="师姐，我把花瓶打碎了。",
+        character_id=character.id,
+        session_id="runtime-tool-session",
+    )
+
+    assert result.dialogue == "拿着这个，先去补好再回来。"
+    assert result.character_id == "tsundere_sister"
+    assert result.character_name == "凌霜"
+
+
 def test_get_or_create_runtime_builds_chat_runtime_with_real_collaborators(monkeypatch):
     _install_loguru_stub()
     _install_game_state_store_stub()

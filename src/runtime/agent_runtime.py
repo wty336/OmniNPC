@@ -60,6 +60,16 @@ class AgentRuntime:
             state["perception_context"] = self.perception_context
         return state
 
+    @staticmethod
+    def _update_planned_response_dialogue(
+        planned_response: Any,
+        dialogue: str,
+    ) -> None:
+        if isinstance(planned_response, dict):
+            planned_response["dialogue"] = dialogue
+            return
+        setattr(planned_response, "dialogue", dialogue)
+
     def _validate_policy_dependencies(self) -> None:
         if not isinstance(self.policy, ChatRuntimePolicy):
             return
@@ -180,6 +190,22 @@ class AgentRuntime:
                     executor = ToolExecutor(ToolCatalog.load())
                 execution = executor.execute(tool_name, tool_arguments, state)
                 state["last_tool_execution"] = execution
+                planned_response = state.get("planned_response")
+                if (
+                    planned_response is not None
+                    and hasattr(self.action_planner, "finalize_response")
+                ):
+                    final_dialogue = self.action_planner.finalize_response(
+                        state["perception_context"],
+                        state["reflection"],
+                        planned_response,
+                        [execution],
+                    )
+                    if final_dialogue:
+                        self._update_planned_response_dialogue(
+                            planned_response,
+                            final_dialogue,
+                        )
 
                 trace.add_event(
                     TurnEvent(

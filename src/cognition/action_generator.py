@@ -30,7 +30,7 @@ ACTION_SYSTEM_PROMPT = _ACTION_SYSTEM_PROMPT
 
 class ActionGenerator:
     """
-    行动生成器。
+    Legacy 兼容行动生成器。
 
     结合内心独白和记忆上下文，生成：
     - 对外台词（玩家可见）
@@ -38,6 +38,9 @@ class ActionGenerator:
 
     当 LLM 返回工具调用时，会执行工具并将结果反馈给 LLM，
     让 LLM 根据工具执行结果生成最终台词（二次调用）。
+
+    Runtime 路径应优先使用 ActionPlanner + ToolExecutor；
+    此类保留给 legacy pipeline 显式 fallback 使用。
     """
 
     def __init__(self, model_adapter: ArkModelAdapter | None = None):

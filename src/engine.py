@@ -178,16 +178,19 @@ class NPCEngine:
             )
 
         if self._use_agent_runtime:
+            # Runtime is the default chat path; keep legacy behind explicit fallback only.
             turn_context = TurnContext(
                 turn_id=f"{session_id}:{character_id}",
                 session_id=session_id,
                 character_id=character_id,
                 player_input=player_input,
+                max_steps=6,
             )
             runtime = self._get_or_create_runtime(character_id)
             runtime_result = runtime.run(turn_context, game_state=game_state)
             response = self._adapt_runtime_result(character, runtime_result)
         else:
+            # Legacy compatibility path. Keep available until runtime behavior fully replaces it.
             pipeline = self._get_or_create_pipeline(character_id)
 
             # 执行认知管线

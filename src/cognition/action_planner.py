@@ -126,3 +126,83 @@ class ActionPlanner:
                 plan.arguments = {}
 
         return plan
+
+    def finalize_response(
+        self,
+        context: PerceptionContext,
+        inner_monologue: str,
+        plan: ActionPlan,
+        tool_results: list[Any],
+    ) -> str:
+        """根据工具执行结果生成最终对白。"""
+        tool_calls = list(plan.tool_calls or [])
+        executed_pairs = list(zip(tool_calls, tool_results))
+        if not executed_pairs:
+            return plan.dialogue
+
+        messages = build_action_messages(context, inner_monologue)
+        assistant_tool_calls = []
+        tool_messages = []
+
+        for index, (tool_call, tool_result) in enumerate(executed_pairs, start=1):
+            function = tool_call.get("function", {})
+            tool_name = function.get("name")
+            parsed_arguments = self._parse_tool_arguments(
+                function.get("arguments", "{}")
+            )
+            tool_call_id = tool_call.get("id") or f"call-{index}"
+
+            assistant_tool_calls.append(
+                {
+                    "id": tool_call_id,
+                    "type": tool_call.get("type", "function"),
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps(parsed_arguments, ensure_ascii=False),
+                    },
+                }
+            )
+            tool_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": json.dumps(
+                        self._serialize_tool_result(tool_result),
+                        ensure_ascii=False,
+                    ),
+                }
+            )
+
+        messages.append(
+            {
+                "role": "assistant",
+                "content": plan.dialogue or "",
+                "tool_calls": assistant_tool_calls,
+            }
+        )
+        messages.extend(tool_messages)
+
+        result = self._model.complete(
+            ModelRequest(
+                purpose="respond",
+                messages=messages,
+                temperature=0.8,
+            )
+        )
+        return result.content or plan.dialogue
+
+    @staticmethod
+    def _parse_tool_arguments(raw_arguments: str) -> dict[str, Any]:
+        try:
+            parsed_arguments = json.loads(raw_arguments)
+        except json.JSONDecodeError:
+            parsed_arguments = {}
+        return parsed_arguments if isinstance(parsed_arguments, dict) else {}
+
+    @staticmethod
+    def _serialize_tool_result(tool_result: Any) -> dict[str, Any]:
+        success = getattr(tool_result, "success", True)
+        if success:
+            return getattr(tool_result, "output", {}) or {}
+        error = getattr(tool_result, "error", None)
+        return {"error": error or "tool execution failed"}

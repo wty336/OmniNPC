@@ -40,6 +40,7 @@ class FakeReflector:
 class FakeActionPlanner:
     def __init__(self):
         self.calls: list[tuple[object, str]] = []
+        self.finalize_calls: list[tuple[object, str, object, list[object]]] = []
 
     def plan(self, context, inner_monologue: str):
         self.calls.append((context, inner_monologue))
@@ -48,6 +49,10 @@ class FakeActionPlanner:
             tool_name="inspect_item",
             arguments={"item": "玉佩"},
         )
+
+    def finalize_response(self, context, inner_monologue: str, plan, tool_results):
+        self.finalize_calls.append((context, inner_monologue, plan, list(tool_results)))
+        return getattr(plan, "dialogue", "")
 
 
 class FakeToolExecution:
@@ -75,6 +80,34 @@ class FakeToolExecutor:
         payload = dict(arguments or {})
         self.calls.append((tool_name, payload, dict(state or {})))
         return FakeToolExecution(tool_name, payload)
+
+
+class EmptyDialogueToolPlanner:
+    def __init__(self):
+        self.calls: list[tuple[object, str]] = []
+        self.finalize_calls: list[tuple[object, str, object, list[object]]] = []
+
+    def plan(self, context, inner_monologue: str):
+        self.calls.append((context, inner_monologue))
+        return SimpleNamespace(
+            dialogue="",
+            tool_name="inspect_item",
+            arguments={"item": "玉佩"},
+            tool_calls=[
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "inspect_item",
+                        "arguments": '{"item": "玉佩"}',
+                    },
+                }
+            ],
+        )
+
+    def finalize_response(self, context, inner_monologue: str, plan, tool_results):
+        self.finalize_calls.append((context, inner_monologue, plan, list(tool_results)))
+        return "别慌，东西我先替你收着。"
 
 
 def test_chat_runtime_policy_is_importable_from_runtime_policies():
@@ -193,3 +226,36 @@ def test_chat_runtime_policy_requires_collaborators_before_running():
                 max_steps=1,
             )
         )
+
+
+def test_chat_runtime_generates_final_dialogue_after_tool_execution_when_initial_plan_is_empty():
+    memory_adapter = FakeMemoryAdapter()
+    reflector = FakeReflector()
+    planner = EmptyDialogueToolPlanner()
+    tool_executor = FakeToolExecutor()
+    perception_context = SimpleNamespace(tag="perception")
+    game_state = GameState(session_id="session-1")
+    game_state.player.player_id = "player-9"
+
+    runtime = AgentRuntime(
+        policy=ChatRuntimePolicy(),
+        tool_executor=tool_executor,
+        memory_adapter=memory_adapter,
+        reflector=reflector,
+        action_planner=planner,
+        perception_context=perception_context,
+        game_state=game_state,
+    )
+
+    result = runtime.run(
+        TurnContext(
+            turn_id="turn-chat-empty-dialogue",
+            session_id="session-1",
+            character_id="npc-1",
+            player_input="帮我看看这个东西",
+            max_steps=6,
+        )
+    )
+
+    assert result.dialogue == "别慌，东西我先替你收着。"
+    assert planner.finalize_calls

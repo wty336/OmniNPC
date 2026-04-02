@@ -1,7 +1,9 @@
 """OmniNPC 全局配置 — 基于 Pydantic Settings，自动读取 .env 文件。"""
 
+import os
 from pathlib import Path
 from dotenv import load_dotenv
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 项目根目录
@@ -9,7 +11,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # 先将 .env 加载到进程环境变量中，
 # 这样所有嵌套的 BaseSettings 子类（如 LLMSettings）也能正确读取
-load_dotenv(PROJECT_ROOT / ".env", override=True)
+load_dotenv(PROJECT_ROOT / ".env", override=False)
+
+
+def _default_chroma_persist_dir() -> Path:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / "OmniNPC" / "chroma_db"
+    return PROJECT_ROOT / "data" / "chroma_db"
 
 
 class LLMSettings(BaseSettings):
@@ -31,6 +40,8 @@ class LLMSettings(BaseSettings):
 class MemorySettings(BaseSettings):
     """记忆系统配置。"""
 
+    model_config = SettingsConfigDict(env_prefix="OMNI_NPC_")
+
     # 工作记忆：保留最近 N 轮对话
     working_memory_window: int = 10
 
@@ -38,7 +49,9 @@ class MemorySettings(BaseSettings):
     episodic_top_k: int = 5
 
     # ChromaDB 存储路径
-    chroma_persist_dir: str = str(PROJECT_ROOT / "data" / "chroma_db")
+    chroma_persist_dir: str = Field(
+        default_factory=lambda: str(_default_chroma_persist_dir()),
+    )
 
     # 向量化模型（ChromaDB 默认使用 all-MiniLM-L6-v2）
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -63,6 +76,7 @@ class Settings(BaseSettings):
     """顶层配置聚合。"""
 
     model_config = SettingsConfigDict(
+        env_prefix="OMNI_NPC_",
         env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
@@ -71,7 +85,10 @@ class Settings(BaseSettings):
     # 应用
     app_name: str = "OmniNPC"
     debug: bool = False
-    log_level: str = "INFO"
+    log_level: str = Field(
+        default="INFO",
+        validation_alias=AliasChoices("OMNI_NPC_LOG_LEVEL", "LOG_LEVEL"),
+    )
 
     # 子配置
     llm: LLMSettings = LLMSettings()

@@ -129,3 +129,13 @@ def test_runtime_and_legacy_paths_return_same_response_shape():
     assert isinstance(runtime_response.dialogue, str)
     assert runtime_response.tool_calls is not None
     assert runtime_response.state_changes is not None
+
+
+def test_legacy_pipeline_remains_available_as_explicit_fallback():
+    engine = _build_engine(use_agent_runtime=False)
+
+    response = engine.process_chat("师姐救我", "tsundere_sister", "fallback-session")
+
+    assert response.dialogue == "哼，什么事？"
+    assert response.character_id == "tsundere_sister"
+    assert response.character_name == "凌霜"

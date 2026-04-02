@@ -645,7 +645,21 @@ git commit -m "test: add runtime parity coverage and clarify api test preconditi
 - Modify: `tests/runtime/test_engine_runtime_integration.py`
 - Modify: `tests/runtime/test_runtime_legacy_parity.py`
 
-- [ ] **Step 1: Write the failing default-path test**
+**Status:** Completed, not committed
+
+**Actual verification result:**
+- `conda activate plante; python -m pytest tests/runtime/test_engine_runtime_integration.py -v`
+- Result: `6 passed`
+- `conda activate plante; python -m pytest tests/runtime/test_runtime_legacy_parity.py -v`
+- Result: `1 passed`
+
+**Actual implementation notes discovered during Task 12 review:**
+- The only production-code change was in `get_engine()`, which now constructs the global singleton with `NPCEngine(use_agent_runtime=True)`.
+- `NPCEngine(use_agent_runtime=False)` remains unchanged, so the explicit legacy fallback path is still available.
+- `tests/runtime/test_engine_runtime_integration.py` now includes coverage that resets the global `_engine` singleton and verifies the default global engine path is runtime-backed.
+- No API contract changes were introduced, and no runtime/cognition internals were expanded in this task.
+
+- [x] **Step 1: Write the failing default-path test**
 
 ```python
 from src.engine import get_engine
@@ -660,7 +674,7 @@ def test_global_engine_defaults_to_runtime(monkeypatch):
     assert engine._use_agent_runtime is True
 ```
 
-- [ ] **Step 2: Run the default-path test to verify it fails**
+- [x] **Step 2: Run the default-path test to verify it fails**
 
 Run:
 
@@ -670,7 +684,7 @@ conda activate plante; python -m pytest tests/runtime/test_engine_runtime_integr
 
 Expected: FAIL because `get_engine()` still constructs `NPCEngine()` with the legacy-default flag.
 
-- [ ] **Step 3: Flip the global default but keep constructor-level fallback**
+- [x] **Step 3: Flip the global default but keep constructor-level fallback**
 
 ```python
 # src/engine.py
@@ -685,7 +699,7 @@ Keep this guarantee:
 - callers can still opt into `NPCEngine(use_agent_runtime=False)` explicitly
 - no global settings flag is introduced
 
-- [ ] **Step 4: Re-run integration and parity coverage**
+- [x] **Step 4: Re-run integration and parity coverage**
 
 Run:
 
@@ -696,6 +710,8 @@ conda activate plante; python -m pytest tests/runtime/test_engine_runtime_integr
 Expected: PASS
 
 - [ ] **Step 5: Commit**
+
+Deferred by user request: Task 12 remains uncommitted for now.
 
 ```bash
 git add src/engine.py tests/runtime/test_engine_runtime_integration.py tests/runtime/test_runtime_legacy_parity.py
@@ -709,7 +725,21 @@ git commit -m "feat: make runtime the default engine path"
 - Modify: `src/cognition/action_generator.py`
 - Test: `tests/runtime/test_runtime_legacy_parity.py`
 
-- [ ] **Step 1: Write the failing quarantine test**
+**Status:** Completed, not committed
+
+**Actual verification result:**
+- `conda activate plante; python -m pytest tests/runtime/test_runtime_legacy_parity.py -v`
+- Result: `2 passed`
+- `conda activate plante; python -m pytest tests/runtime/test_runtime_legacy_parity.py tests/runtime/test_engine_runtime_integration.py -v`
+- Result: `8 passed`
+
+**Actual implementation notes discovered during Task 13 review:**
+- `tests/runtime/test_runtime_legacy_parity.py` now includes explicit fallback coverage for `NPCEngine(use_agent_runtime=False)`.
+- `src/engine.py` now documents the runtime branch as the default chat path and the legacy branch as compatibility fallback only.
+- `src/cognition/action_generator.py` is now explicitly documented as a legacy compatibility wrapper; runtime-enabled paths are expected to use `ActionPlanner + ToolExecutor`.
+- Task 13 did not delete or rewrite legacy behavior. It only tightened tests and clarified boundaries in code.
+
+- [x] **Step 1: Write the failing quarantine test**
 
 ```python
 from src.engine import NPCEngine
@@ -722,7 +752,7 @@ def test_legacy_pipeline_remains_available_as_explicit_fallback():
     assert response.dialogue
 ```
 
-- [ ] **Step 2: Run the quarantine test to verify it fails if fallback is broken**
+- [x] **Step 2: Run the quarantine test to verify it fails if fallback is broken**
 
 Run:
 
@@ -732,7 +762,7 @@ conda activate plante; python -m pytest tests/runtime/test_runtime_legacy_parity
 
 Expected: PASS today; keep this step in the plan to protect the explicit fallback before further cleanup.
 
-- [ ] **Step 3: Make the legacy-only boundaries explicit in code comments and branch names**
+- [x] **Step 3: Make the legacy-only boundaries explicit in code comments and branch names**
 
 ```python
 # src/engine.py
@@ -757,7 +787,7 @@ class ActionGenerator:
         self._planner = ActionPlanner(model_adapter=model_adapter)
 ```
 
-- [ ] **Step 4: Run the focused quarantine regression**
+- [x] **Step 4: Run the focused quarantine regression**
 
 Run:
 
@@ -768,6 +798,8 @@ conda activate plante; python -m pytest tests/runtime/test_runtime_legacy_parity
 Expected: PASS
 
 - [ ] **Step 5: Commit**
+
+Deferred by user request: Task 13 remains uncommitted for now.
 
 ```bash
 git add src/engine.py src/cognition/action_generator.py tests/runtime/test_runtime_legacy_parity.py tests/runtime/test_engine_runtime_integration.py
